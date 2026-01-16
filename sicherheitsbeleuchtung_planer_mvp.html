@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+  <title>Sicherheitsbeleuchtung Planer (MVP)</title>
+  <style>
+    :root { --bg:#0b0f14; --panel:#111827; --btn:#1f2937; --txt:#e5e7eb; --mut:#94a3b8; --acc:#22c55e; }
+    body { margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--txt); }
+    header { padding:10px 12px; background:linear-gradient(180deg, #0f172a, #0b0f14); border-bottom:1px solid #1f2937; position:sticky; top:0; z-index:5; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .btn { background:var(--btn); border:1px solid #334155; color:var(--txt); padding:10px 12px; border-radius:12px; font-weight:600; cursor:pointer; user-select:none; }
+    .btn:active { transform:translateY(1px); }
+    .btn.primary { border-color:#16a34a; background:#0b2a16; }
+    .btn.danger { border-color:#dc2626; background:#2a0b0b; }
+    .btn.on { outline:2px solid var(--acc); }
+    input[type="file"]{ display:none; }
+    .chip { padding:8px 10px; border:1px solid #334155; border-radius:999px; color:var(--mut); font-size:12px; }
+    .wrap { display:grid; grid-template-columns: 320px 1fr; gap:10px; padding:10px; }
+    @media (max-width: 980px){ .wrap{ grid-template-columns:1fr; } }
+    .panel { background:var(--panel); border:1px solid #1f2937; border-radius:16px; padding:12px; }
+    .panel h3 { margin:0 0 8px; font-size:14px; color:#cbd5e1; }
+    .panel p { margin:6px 0; color:var(--mut); font-size:12px; line-height:1.35; }
+    canvas { touch-action:none; background:#0b0f14; border-radius:16px; border:1px solid #1f2937; width:100%; height:auto; display:block; }
+    .kv { display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--mut); }
+    .kv b { color:var(--txt); font-weight:700; }
+    .list { max-height:220px; overflow:auto; border-top:1px dashed #334155; margin-top:10px; padding-top:10px; }
+    .item { display:flex; justify-content:space-between; gap:10px; padding:8px; border:1px solid #1f2937; border-radius:12px; margin-bottom:8px; }
+    .item small{ color:var(--mut); display:block; }
+    .right { display:flex; gap:6px; align-items:center; }
+    .hint { color:var(--mut); font-size:12px; }
+    .field { width:100%; box-sizing:border-box; padding:10px 12px; border-radius:12px; border:1px solid #334155; background:#0b1220; color:var(--txt); }
+    .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <label class="btn primary">
+      Grundriss laden (JPG/PNG)
+      <input id="filePlan" type="file" accept="image/*"/>
+    </label>
+
+    <button id="toolSelect" class="btn on">Auswählen</button>
+    <button id="toolRoute" class="btn">Fluchtweg</button>
+    <button id="toolNL" class="btn">Notleuchte</button>
+    <button id="toolRZL" class="btn">Rettungszeichen</button>
+    <button id="toolText" class="btn">Text</button>
+
+    <button id="btnRotate" class="btn">↻ Plan drehen (90°)</button>
+    <button id="btnDelete" class="btn danger">Löschen</button>
+
+    <button id="btnExportPNG" class="btn">Export PNG</button>
+    <button id="btnSave" class="btn">Projekt speichern (JSON)</button>
+    <label class="btn">
+      Projekt laden
+      <input id="fileProject" type="file" accept="application/json"/>
+    </label>
+
+    <span class="chip" id="status">Bereit</span>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <h3>Info & Bedienung</h3>
+    <p><b>1)</b> Grundriss als Bild laden (Scan/Foto).</p>
+    <p><b>2)</b> Tool wählen: Fluchtweg / Notleuchte / Rettungszeichen / Text.</p>
+    <p><b>3)</b> Objekt antippen → verschieben. Mit <b>Löschen</b> entfernen.</p>
+    <p><b>Fluchtweg:</b> Tippe Punkte nacheinander. Doppeltipp beendet.</p>
+    <p><b>Notleuchte:</b> Kreis “NL”. <b>Rettungszeichen:</b> Rechteck “RZL”.</p>
+
+    <div style="margin-top:10px" class="kv"><span>Aktives Tool</span><b id="activeTool">Auswählen</b></div>
+    <div class="kv"><span>Objekte</span><b id="objCount">0</b></div>
+
+    <div style="margin-top:10px">
+      <h3>Auswahl bearbeiten</h3>
+      <p class="hint">Tippe ein Objekt an (Tool „Auswählen“), dann kannst du Beschriftung/Rotation ändern.</p>
+      <div class="grid2">
+        <input id="selLabel" class="field" placeholder="Label (z.B. NL-01)"/>
+        <button id="btnObjRotate" class="btn">Objekt drehen (90°)</button>
+      </div>
+    </div>
+
+    <div class="list" id="inventory">
+      <h3>Stückliste (live)</h3>
+      <p class="hint">Zählt deine platzierten Leuchten automatisch.</p>
+      <div id="invItems"></div>
+    </div>
+
+    <div style="margin-top:10px">
+      <h3>Tablet-Hinweis</h3>
+      <p class="hint">Wenn du das auf dem Tablet nutzen willst: Datei lokal öffnen (z.B. via Dateien-App) oder über einen kleinen lokalen Server bereitstellen. Dann kannst du sie als „App“ zum Startbildschirm hinzufügen (PWA-Style).</p>
+    </div>
+  </div>
+
+  <div>
+    <canvas id="c" width="1600" height="1000"></canvas>
+    <div class="hint" style="padding:8px 2px;">MVP: Einzeichnen & Export. Zoomen/Pan kann man als nächstes ergänzen.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const activeToolEl = document.getElementById('activeTool');
+  const objCountEl = document.getElementById('objCount');
+  const invItemsEl = document.getElementById('invItems');
+  const selLabelEl = document.getElementById('selLabel');
+
+  // Tools
+  const tools = {
+    select: document.getElementById('toolSelect'),
+    route: document.getElementById('toolRoute'),
+    nl: document.getElementById('toolNL'),
+    rzl: document.getElementById('toolRZL'),
+    text: document.getElementById('toolText'),
+  };
+  let tool = 'select';
+
+  // Background plan image
+  let bgImg = null;
+  let bg = { w: canvas.width, h: canvas.height, rot: 0 };
+
+  // Scene objects
+  // types: 'route', 'nl', 'rzl', 'text'
+  let objects = [];
+  let selectedId = null;
+
+  // route drawing state
+  let drawingRoute = null; // { id }
+
+  // Drag state
+  let pointerDown = false;
+  let dragOffset = { x: 0, y: 0 };
+  let dragRouteStart = null;
+
+  function setStatus(msg){ statusEl.textContent = msg; }
+  function setTool(t){
+    tool = t;
+    activeToolEl.textContent =
+      t === 'select' ? 'Auswählen' :
+      t === 'route' ? 'Fluchtweg' :
+      t === 'nl' ? 'Notleuchte' :
+      t === 'rzl' ? 'Rettungszeichen' : 'Text';
+
+    Object.entries(tools).forEach(([k, el]) => el.classList.toggle('on', k===t));
+    setStatus(`Tool: ${activeToolEl.textContent}`);
+    if (t !== 'route') drawingRoute = null;
+    render();
+  }
+
+  function uuid(){
+    return Math.random().toString(16).slice(2) + Date.now().toString(16);
+  }
+
+  function toCanvasPos(evt){
+    const rect = canvas.getBoundingClientRect();
+    const clientX = (evt.touches ? evt.touches[0].clientX : evt.clientX);
+    const clientY = (evt.touches ? evt.touches[0].clientY : evt.clientY);
+    const x = (clientX - rect.left) * (canvas.width / rect.width);
+    const y = (clientY - rect.top) * (canvas.height / rect.height);
+    return { x, y };
+  }
+
+  function distToSegment(p, a, b){
+    const vx = b.x - a.x, vy = b.y - a.y;
+    const wx = p.x - a.x, wy = p.y - a.y;
+    const c1 = vx*wx + vy*wy;
+    if (c1 <= 0) return Math.hypot(p.x-a.x, p.y-a.y);
+    const c2 = vx*vx + vy*vy;
+    if (c2 <= c1) return Math.hypot(p.x-b.x, p.y-b.y);
+    const t = c1 / c2;
+    const px = a.x + t*vx, py = a.y + t*vy;
+    return Math.hypot(p.x-px, p.y-py);
+  }
+
+  function hitTest(pos){
+    for (let i = objects.length - 1; i >= 0; i--){
+      const o = objects[i];
+      if (o.type === 'nl'){
+        const dx = pos.x - o.x, dy = pos.y - o.y;
+        if (Math.sqrt(dx*dx + dy*dy) <= o.r) return o.id;
+      }
+      if (o.type === 'rzl'){
+        // axis-aligned hitbox (good enough for MVP even if rotated)
+        if (pos.x >= o.x - o.w/2 && pos.x <= o.x + o.w/2 &&
+            pos.y >= o.y - o.h/2 && pos.y <= o.y + o.h/2) return o.id;
+      }
+      if (o.type === 'text'){
+        const w = (o.text.length * o.size) * 0.6;
+        const h = o.size * 1.2;
+        if (pos.x >= o.x && pos.x <= o.x + w && pos.y >= o.y - h && pos.y <= o.y) return o.id;
+      }
+      if (o.type === 'route'){
+        const pts = o.points;
+        for (let j=0; j<pts.length-1; j++){
+          if (distToSegment(pos, pts[j], pts[j+1]) < 10) return o.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  function bringToFront(id){
+    const idx = objects.findIndex(o => o.id === id);
+    if (idx >= 0){
+      const [o] = objects.splice(idx, 1);
+      objects.push(o);
+    }
+  }
+
+  function select(id){
+    selectedId = id;
+    const o = objects.find(x => x.id === selectedId);
+    selLabelEl.value = (o && o.label) ? o.label : '';
+    render();
+  }
+
+  function updateInventory(){
+    const count = { nl:0, rzl:0 };
+    objects.forEach(o => {
+      if (o.type === 'nl') count.nl++;
+      if (o.type === 'rzl') count.rzl++;
+    });
+    invItemsEl.innerHTML = `
+      <div class="item"><div><b>Notleuchten</b><small>NL</small></div><div class="right"><span class="chip">${count.nl}</span></div></div>
+      <div class="item"><div><b>Rettungszeichenleuchten</b><small>RZL</small></div><div class="right"><span class="chip">${count.rzl}</span></div></div>
+      <div class="item"><div><b>Fluchtwege</b><small>Route</small></div><div class="right"><span class="chip">${objects.filter(o=>o.type==='route').length}</span></div></div>
+      <div class="item"><div><b>Texte</b><small>Label</small></div><div class="right"><span class="chip">${objects.filter(o=>o.type==='text').length}</span></div></div>
+    `;
+    objCountEl.textContent = String(objects.length);
+  }
+
+  function render(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // background
+    if (bgImg){
+      ctx.save();
+      ctx.translate(canvas.width/2, canvas.height/2);
+      ctx.rotate(bg.rot * Math.PI/180);
+      ctx.drawImage(bgImg, -bg.w/2, -bg.h/2, bg.w, bg.h);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '20px system-ui';
+      ctx.fillText('Grundriss laden (oben links)', 40, 60);
+      ctx.restore();
+    }
+
+    // objects
+    objects.forEach(o => {
+      const isSel = (o.id === selectedId);
+
+      if (o.type === 'route'){
+        ctx.save();
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = isSel ? '#22c55e' : '#38bdf8';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        o.points.forEach((p, idx) => idx ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.stroke();
+
+        ctx.fillStyle = isSel ? '#22c55e' : '#38bdf8';
+        o.points.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI*2); ctx.fill(); });
+        ctx.restore();
+      }
+
+      if (o.type === 'nl'){
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = isSel ? '#22c55e' : '#e5e7eb';
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = 'bold 18px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('NL', o.x, o.y);
+        if (o.label){
+          ctx.font = '12px system-ui';
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillText(o.label, o.x, o.y + o.r + 14);
+        }
+        ctx.restore();
+      }
+
+      if (o.type === 'rzl'){
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = isSel ? '#22c55e' : '#e5e7eb';
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.translate(o.x, o.y);
+        ctx.rotate(o.rot * Math.PI/180);
+        ctx.fillRect(-o.w/2, -o.h/2, o.w, o.h);
+        ctx.strokeRect(-o.w/2, -o.h/2, o.w, o.h);
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = 'bold 16px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('RZL', 0, 0);
+        ctx.restore();
+
+        if (o.label){
+          ctx.save();
+          ctx.font = '12px system-ui';
+          ctx.fillStyle = '#cbd5e1';
+          ctx.textAlign = 'center';
+          ctx.fillText(o.label, o.x, o.y + o.h/2 + 16);
+          ctx.restore();
+        }
+      }
+
+      if (o.type === 'text'){
+        ctx.save();
+        ctx.fillStyle = isSel ? '#22c55e' : '#e5e7eb';
+        ctx.font = `bold ${o.size}px system-ui`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(o.text, o.x, o.y);
+        if (isSel){
+          const w = (o.text.length * o.size) * 0.6;
+          ctx.strokeStyle = '#22c55e';
+          ctx.strokeRect(o.x - 4, o.y - o.size - 4, w + 8, o.size + 10);
+        }
+        ctx.restore();
+      }
+    });
+
+    // hint while drawing route
+    if (tool === 'route'){
+      ctx.save();
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px system-ui';
+      ctx.fillText('Fluchtweg: Tippe Punkte – Doppeltipp beendet', 14, canvas.height - 16);
+      ctx.restore();
+    }
+
+    updateInventory();
+  }
+
+  // Pointer handlers
+  canvas.addEventListener('pointerdown', (evt) => {
+    evt.preventDefault();
+    pointerDown = true;
+    canvas.setPointerCapture(evt.pointerId);
+    const pos = toCanvasPos(evt);
+
+    // Double tap ends route
+    if (tool === 'route'){
+      const now = Date.now();
+      canvas._lastTap = canvas._lastTap || 0;
+      const dt = now - canvas._lastTap;
+      canvas._lastTap = now;
+      if (dt < 320 && drawingRoute){
+        drawingRoute = null;
+        setStatus('Fluchtweg beendet');
+        render();
+        return;
+      }
+    }
+
+    if (tool === 'select'){
+      const hit = hitTest(pos);
+      if (hit){
+        bringToFront(hit);
+        select(hit);
+        const o = objects.find(x => x.id === hit);
+        if (o.type === 'route'){
+          dragRouteStart = { x: pos.x, y: pos.y };
+        } else {
+          dragOffset.x = pos.x - o.x;
+          dragOffset.y = pos.y - o.y;
+        }
+      } else {
+        select(null);
+      }
+      return;
+    }
+
+    if (tool === 'nl'){
+      const id = uuid();
+      objects.push({ id, type:'nl', x:pos.x, y:pos.y, r:22, label:'NL-01' });
+      select(id);
+      setStatus('Notleuchte gesetzt');
+      render();
+      return;
+    }
+
+    if (tool === 'rzl'){
+      const id = uuid();
+      objects.push({ id, type:'rzl', x:pos.x, y:pos.y, w:56, h:34, rot:0, label:'RZL-01' });
+      select(id);
+      setStatus('Rettungszeichen gesetzt');
+      render();
+      return;
+    }
+
+    if (tool === 'text'){
+      const t = prompt('Text eingeben:', 'Hinweis / Beschriftung');
+      if (!t) { setStatus('Text abgebrochen'); return; }
+      const id = uuid();
+      objects.push({ id, type:'text', x:pos.x, y:pos.y, text:t, size:18, label:'' });
+      select(id);
+      setStatus('Text gesetzt');
+      render();
+      return;
+    }
+
+    if (tool === 'route'){
+      if (!drawingRoute){
+        const id = uuid();
+        const route = { id, type:'route', points:[{x:pos.x, y:pos.y}] };
+        objects.push(route);
+        drawingRoute = { id };
+        select(id);
+        setStatus('Fluchtweg gestartet');
+      } else {
+        const o = objects.find(x => x.id === drawingRoute.id);
+        if (o) o.points.push({x:pos.x, y:pos.y});
+        setStatus('Fluchtweg Punkt hinzugefügt');
+      }
+      render();
+      return;
+    }
+  });
+
+  canvas.addEventListener('pointermove', (evt) => {
+    if (!pointerDown) return;
+    if (tool !== 'select') return;
+    if (!selectedId) return;
+
+    const pos = toCanvasPos(evt);
+    const o = objects.find(x => x.id === selectedId);
+    if (!o) return;
+
+    if (o.type === 'route' && dragRouteStart){
+      const dx = pos.x - dragRouteStart.x;
+      const dy = pos.y - dragRouteStart.y;
+      o.points = o.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      dragRouteStart = { x: pos.x, y: pos.y };
+      render();
+      return;
+    }
+
+    if (o.type === 'nl' || o.type === 'rzl' || o.type === 'text'){
+      o.x = pos.x - dragOffset.x;
+      o.y = pos.y - dragOffset.y;
+      render();
+    }
+  });
+
+  canvas.addEventListener('pointerup', (evt) => {
+    pointerDown = false;
+    dragRouteStart = null;
+    try { canvas.releasePointerCapture(evt.pointerId); } catch(e) {}
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && tool === 'route'){
+      drawingRoute = null;
+      setStatus('Fluchtweg beendet');
+      render();
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId){
+      deleteSelected();
+    }
+  });
+
+  function deleteSelected(){
+    if (!selectedId) return;
+    objects = objects.filter(o => o.id !== selectedId);
+    selectedId = null;
+    selLabelEl.value = '';
+    setStatus('Objekt gelöscht');
+    render();
+  }
+
+  // UI wiring
+  tools.select.addEventListener('click', () => setTool('select'));
+  tools.route.addEventListener('click', () => setTool('route'));
+  tools.nl.addEventListener('click', () => setTool('nl'));
+  tools.rzl.addEventListener('click', () => setTool('rzl'));
+  tools.text.addEventListener('click', () => setTool('text'));
+
+  document.getElementById('btnDelete').addEventListener('click', deleteSelected);
+
+  document.getElementById('btnRotate').addEventListener('click', () => {
+    bg.rot = (bg.rot + 90) % 360;
+    setStatus('Plan gedreht');
+    render();
+  });
+
+  document.getElementById('btnObjRotate').addEventListener('click', () => {
+    if (!selectedId) return;
+    const o = objects.find(x => x.id === selectedId);
+    if (!o) return;
+    if (o.type === 'rzl'){
+      o.rot = (o.rot + 90) % 360;
+      setStatus('RZL gedreht');
+    } else {
+      setStatus('Rotation nur bei RZL im MVP');
+    }
+    render();
+  });
+
+  selLabelEl.addEventListener('input', () => {
+    if (!selectedId) return;
+    const o = objects.find(x => x.id === selectedId);
+    if (!o) return;
+    o.label = selLabelEl.value;
+    render();
+  });
+
+  // Plan import
+  document.getElementById('filePlan').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      bgImg = img;
+      // fit image into canvas
+      const s = Math.min(canvas.width / img.width, canvas.height / img.height);
+      bg.w = Math.round(img.width * s);
+      bg.h = Math.round(img.height * s);
+      bg.rot = 0;
+      setStatus('Grundriss geladen');
+      render();
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  });
+
+  // Export PNG (canvas)
+  document.getElementById('btnExportPNG').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.download = 'sicherheitsbeleuchtung_plan.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+    setStatus('PNG exportiert');
+  });
+
+  // Save/Load project JSON
+  function projectData(){
+    return {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      bg: { rot: bg.rot, w: bg.w, h: bg.h },
+      objects
+    };
+  }
+
+  document.getElementById('btnSave').addEventListener('click', () => {
+    const data = projectData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.download = 'sibel_projekt.json';
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    setStatus('Projekt gespeichert');
+  });
+
+  document.getElementById('fileProject').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    try{
+      const data = JSON.parse(text);
+      if (!data || !data.objects) throw new Error('Format');
+      objects = data.objects;
+      bg.rot = (data.bg && data.bg.rot) || 0;
+      bg.w = (data.bg && data.bg.w) || bg.w;
+      bg.h = (data.bg && data.bg.h) || bg.h;
+      selectedId = null;
+      selLabelEl.value = '';
+      drawingRoute = null;
+      setStatus('Projekt geladen (Grundriss-Bild bitte ggf. neu laden)');
+      render();
+    } catch(err){
+      alert('Konnte Projekt nicht laden. JSON ungültig.');
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
